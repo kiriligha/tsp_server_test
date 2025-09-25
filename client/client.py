@@ -1,6 +1,6 @@
 import socket
 
-def send_command(*args, host='127.0.0.1', port=6379):
+def send_command(*args, host='0.0.0.0', port=6379):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((host, port))
     command = b'*' + str(len(args)).encode() + b'\r\n'
@@ -13,5 +13,7 @@ def send_command(*args, host='127.0.0.1', port=6379):
 
 if __name__ == "__main__":
     print(send_command('SET', 'key', 'value'))
+    print(send_command('GET', 'key'))
+    print(send_command('DEL', 'key'))
     print(send_command('GET', 'key'))
     print(send_command('SET', 'key2', 'value2', 'EX', '5'))

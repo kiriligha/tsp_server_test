@@ -4,7 +4,7 @@ import time
 from typing import Dict
 
 class CacheServer:
-    def __init__(self, host: str = '127.0.0.1', port: int = 6379):
+    def __init__(self, host: str = '0.0.0.0', port: int = 6379):
         self.host = host
         self.port = port
         self.cache: Dict[str, str] = {}
@@ -15,6 +15,7 @@ class CacheServer:
         self.cleanup_thread = threading.Thread(target=self._cleanup_expired, daemon=True)
 
     def start(self):
+        print("Starting server...")
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(5)
         print(f"Server listening on {self.host}:{self.port}")
@@ -22,6 +23,7 @@ class CacheServer:
         while self.running:
             try:
                 client_socket, addr = self.server_socket.accept()
+                print(f"New client connected: {addr}")
                 threading.Thread(target=self._handle_client, args=(client_socket,)).start()
             except OSError:
                 break
@@ -29,23 +31,33 @@ class CacheServer:
     def stop(self):
         self.running = False
         self.server_socket.close()
+        print("Server stopped")
 
     def _handle_client(self, client_socket: socket.socket):
         buffer = b''
         while self.running:
             try:
-                data = client_socket.recv(1024)
+                data = client_socket.recv(4096)
+                print(f"Received data: {len(data)} bytes")
                 if not data:
+                    print("Client disconnected")
                     break
                 buffer += data
                 while buffer:
                     resp, consumed = self._parse_resp(buffer)
                     if resp is None:
+                        print("Incomplete command, waiting for more data")
                         break
+                    print(f"Parsed command: {resp}, consumed: {consumed}")
                     buffer = buffer[consumed:]
                     response = self._process_command(resp)
+                    print(f"Sending response: {len(response)} bytes")
                     client_socket.sendall(response)
-            except ConnectionResetError:
+            except ConnectionResetError as e:
+                print(f"ConnectionResetError: {e}")
+                break
+            except Exception as e:
+                print(f"Unexpected error: {e}")
                 break
         client_socket.close()
 
@@ -54,6 +66,8 @@ class CacheServer:
             return None, 0
         try:
             parts = data.split(b'\r\n')
+            if len(parts) < 1:
+                return None, 0
             array_len = int(parts[0][1:].decode())
             expected_parts = 1 + array_len * 2
             if len(parts) < expected_parts:
@@ -61,8 +75,12 @@ class CacheServer:
             command = []
             index = 1
             for _ in range(array_len):
+                if index >= len(parts):
+                    return None, 0
                 bulk_len = int(parts[index][1:].decode())
                 index += 1
+                if index >= len(parts):
+                    return None, 0
                 value = parts[index].decode()
                 if len(value) != bulk_len:
                     raise ValueError("Invalid bulk length")
@@ -80,6 +98,7 @@ class CacheServer:
         handlers = {
             'GET': self._handle_get,
             'SET': self._handle_set,
+            'DEL': self._handle_del,  
         }
         handler = handlers.get(cmd)
         if handler:
@@ -97,10 +116,11 @@ class CacheServer:
         return b"$" + str(len(value)).encode() + b"\r\n" + value.encode() + b"\r\n"
 
     def _handle_set(self, command: list) -> bytes:
-        #print(command, len(command))
         if len(command) < 3:
             return b"-ERR wrong number of arguments for SET\r\n"
         key, value = command[1], command[2]
+        if key == '' or value == '':
+            return b"-ERR cannot create a pair with empty objects\r\n"
         ttl = None
         if len(command) > 3 and command[3].upper() == 'EX':
             if len(command) != 5:
@@ -115,6 +135,17 @@ class CacheServer:
         else:
             self.ttl.pop(key, None)
         return b"+OK\r\n"
+
+    def _handle_del(self, command: list) -> bytes:
+        if len(command) != 2:
+            return b"-ERR wrong number of arguments for DEL\r\n"
+        key = command[1]
+        if key in self.cache.keys():
+            self.cache.pop(key, None)
+            self.ttl.pop(key, None)
+            return b"+OK\r\n"
+        else:
+            return b"-ERR there is no such key for DEL\r\n"
 
     def _expire_if_needed(self, key: str):
         expire_time = self.ttl.get(key)
