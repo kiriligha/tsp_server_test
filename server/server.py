@@ -97,6 +97,7 @@ class CacheServer:
         return b"$" + str(len(value)).encode() + b"\r\n" + value.encode() + b"\r\n"
 
     def _handle_set(self, command: list) -> bytes:
+        #print(command, len(command))
         if len(command) < 3:
             return b"-ERR wrong number of arguments for SET\r\n"
         key, value = command[1], command[2]
